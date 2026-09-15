@@ -1,0 +1,109 @@
+# Builds and publishes the extension when a version tag is pushed.
+#
+# The contract with Fontelle's Extensions page
+# (`crates/fontelle-app/src/extensions.rs`) is two names: the archive is
+# `fontelle-vst2-<version>-<target>.tar.gz` and holds `libfontelle_vst2.so`,
+# and `SHA256SUMS` sits beside it in `sha256sum` format. Fontelle reads this
+# repository's `releases/latest`, verifies the checksum, and renames the
+# library into its bridges folder.
+#
+# Publishing is a human gate (Ty's call), and the VST 2 release also waits on
+# the counsel questions in the DAW repo's `docs/vst-plan.md` §3.3. Cutting one:
+# bump `version` in the workspace `Cargo.toml`, commit, then
+#
+#     git tag v0.1.0 && git push origin v0.1.0
+#
+# The first job refuses a tag that does not match the version in the tree.
+#
+# Linux only for now: Fontelle's own platform, and where the bridge is
+# exercised. On any other platform Fontelle's installer reports "no build for
+# your target" rather than a broken download — Windows and macOS targets are
+# added here once they are tested.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    name: The tag matches the crate version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: read
+        run: |
+          version=$(cargo metadata --format-version 1 --no-deps \
+            | python3 -c 'import json,sys; ps=json.load(sys.stdin)["packages"]; print(next(p["version"] for p in ps if p["name"]=="fontelle-vst2"))')
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$version" != "$tag" ]; then
+            echo "tag v$tag does not match Cargo.toml version $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.target }}
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      NAME: fontelle-vst2-${{ needs.version.outputs.version }}-${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - run: cargo build --release --locked -p fontelle-vst2 --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p "dist/$NAME"
+          cp "target/${{ matrix.target }}/release/libfontelle_vst2.so" "dist/$NAME/"
+          cp LICENSE-MIT LICENSE-APACHE README.md "dist/$NAME/"
+          tar -czf "$NAME.tar.gz" -C dist "$NAME"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.NAME }}
+          path: ${{ env.NAME }}.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: Publish the release
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cd artifacts
+          sha256sum fontelle-vst2-* > SHA256SUMS
+          cat SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: fontelle-vst2 ${{ needs.version.outputs.version }}
+          generate_release_notes: true
+          files: |
+            artifacts/fontelle-vst2-*
+            artifacts/SHA256SUMS

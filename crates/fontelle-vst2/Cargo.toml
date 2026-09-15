@@ -1,0 +1,21 @@
+[package]
+name = "fontelle-vst2"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The VST 2 extension for the Fontelle DAW: a clean-room VST 2.4 host bridge."
+
+[lib]
+# cdylib is what Fontelle loads; rlib is so the loader test can call the entry
+# point directly.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+libloading.workspace = true
+
+[dev-dependencies]
+# Building the test brings the fixture plugin's .so into the target dir for the
+# loader test to open.
+vst2-fixture = { path = "../vst2-fixture" }

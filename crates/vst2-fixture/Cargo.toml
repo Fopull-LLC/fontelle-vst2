@@ -1,0 +1,12 @@
+[package]
+name = "vst2-fixture"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "A tiny VST 2.4 plugin written against the clean-room interface, for testing the bridge's loader."
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
