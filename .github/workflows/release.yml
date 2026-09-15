@@ -2,23 +2,29 @@
 #
 # The contract with Fontelle's Extensions page
 # (`crates/fontelle-app/src/extensions.rs`) is two names: the archive is
-# `fontelle-vst2-<version>-<target>.tar.gz` and holds `libfontelle_vst2.so`,
-# and `SHA256SUMS` sits beside it in `sha256sum` format. Fontelle reads this
-# repository's `releases/latest`, verifies the checksum, and renames the
-# library into its bridges folder.
+# `fontelle-vst2-<version>-<target>` (`.tar.gz`, or `.zip` on Windows) and
+# holds the bridge library named the way *that build of Fontelle* looks for it
+# inside the archive (`Extension::library_name`):
 #
-# Publishing is a human gate (Ty's call), and the VST 2 release also waits on
-# the counsel questions in the DAW repo's `docs/vst-plan.md` §3.3. Cutting one:
-# bump `version` in the workspace `Cargo.toml`, commit, then
+#   x86_64-unknown-linux-gnu   libfontelle_vst2.so
+#   x86_64-pc-windows-msvc     fontelle-vst2.dll      (cargo builds
+#                                                       fontelle_vst2.dll; we
+#                                                       rename it to the hyphen
+#                                                       name Fontelle wants)
+#   *-apple-darwin             libfontelle_vst2.dylib
 #
-#     git tag v0.1.0 && git push origin v0.1.0
+# and `SHA256SUMS` sits beside them in `sha256sum` format. Fontelle reads this
+# repository's `releases/latest`, verifies the checksum, unpacks the archive
+# (`tar -xf`, which also reads a `.zip` on Windows), finds that file by name and
+# renames it into its bridges folder. The four targets here are exactly the four
+# `updates::target_triple` reports, so a Fontelle on any of them finds its asset.
+#
+# Publishing is a human gate (Ty's call): bump `version` in the workspace
+# `Cargo.toml`, commit, then
+#
+#     git tag v0.1.1 && git push origin v0.1.1
 #
 # The first job refuses a tag that does not match the version in the tree.
-#
-# Linux only for now: Fontelle's own platform, and where the bridge is
-# exercised. On any other platform Fontelle's installer reports "no build for
-# your target" rather than a broken download — Windows and macOS targets are
-# added here once they are tested.
 
 name: Release
 
@@ -58,8 +64,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # The oldest Ubuntu the runners offer, so the library's glibc floor is
+          # as low as it can be: Linux is the point of this project.
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-latest
+            target: x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
     env:
       VERSION: ${{ needs.version.outputs.version }}
@@ -72,18 +86,43 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
-      - run: cargo build --release --locked -p fontelle-vst2 --target ${{ matrix.target }}
-      - name: Package
+      # Prove the bridge on this OS before shipping it: the loader test opens the
+      # fixture plugin — a real .so/.dll/.dylib — through the same code path
+      # Fontelle uses. Native arch only (a cross target has nothing to run on).
+      - name: Test (native arch)
+        if: ${{ !(matrix.os == 'macos-latest' && matrix.target == 'x86_64-apple-darwin') }}
+        run: cargo test --release --locked
+      - name: Build the bridge
+        run: cargo build --release --locked -p fontelle-vst2 --target ${{ matrix.target }}
+
+      - name: Package (unix)
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           mkdir -p "dist/$NAME"
-          cp "target/${{ matrix.target }}/release/libfontelle_vst2.so" "dist/$NAME/"
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            cp "target/${{ matrix.target }}/release/libfontelle_vst2.dylib" "dist/$NAME/"
+          else
+            cp "target/${{ matrix.target }}/release/libfontelle_vst2.so" "dist/$NAME/"
+          fi
           cp LICENSE-MIT LICENSE-APACHE README.md "dist/$NAME/"
           tar -czf "$NAME.tar.gz" -C dist "$NAME"
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "dist/$env:NAME" | Out-Null
+          # cargo names the cdylib fontelle_vst2.dll; Fontelle's install path
+          # looks for the hyphenated fontelle-vst2.dll inside the archive.
+          Copy-Item "target/${{ matrix.target }}/release/fontelle_vst2.dll" "dist/$env:NAME/fontelle-vst2.dll"
+          Copy-Item LICENSE-MIT, LICENSE-APACHE, README.md "dist/$env:NAME/"
+          Compress-Archive -Path "dist/$env:NAME" -DestinationPath "$env:NAME.zip"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ env.NAME }}
-          path: ${{ env.NAME }}.tar.gz
+          path: |
+            ${{ env.NAME }}.tar.gz
+            ${{ env.NAME }}.zip
           if-no-files-found: error
 
   publish:
