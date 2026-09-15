@@ -14,7 +14,7 @@
 
 use std::ffi::c_void;
 
-const VST_MAGIC: i32 = 0x5665_7350;
+const VST_MAGIC: i32 = 0x5673_7450; // 'VstP' (kEffectMagic), what a real plugin stamps
 const VST_VERSION_2_4: i32 = 2400;
 
 const EFF_FLAGS_CAN_REPLACING: i32 = 1 << 4;

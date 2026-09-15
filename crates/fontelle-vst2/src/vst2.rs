@@ -31,7 +31,7 @@ use std::ffi::{c_char, c_void};
 /// The magic number an `AEffect` carries in its first field: the bytes
 /// `'VstP'` big-endian, which is how a host tells a real plugin struct from
 /// random memory.
-pub const VST_MAGIC: i32 = 0x5665_7350; // 'V''s''t''P'
+pub const VST_MAGIC: i32 = 0x5673_7450; // 'V''s''t''P' (kEffectMagic)
 
 /// The ABI revision a 2.4 host reports and a plugin checks: 2400.
 pub const VST_VERSION_2_4: i32 = 2400;
@@ -247,4 +247,22 @@ pub fn buffer_string(buffer: &[c_char]) -> String {
         .map(|&c| c as u8)
         .collect();
     String::from_utf8_lossy(&bytes).into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::VST_MAGIC;
+
+    /// `kEffectMagic = CCONST('V','s','t','P')` — a real plugin's `AEffect.magic`
+    /// is this exact number, the big-endian bytes `VstP`. The fixture can stamp
+    /// whatever the bridge checks for, so agreement between them proves nothing;
+    /// only this pins the constant to the ABI every third-party plugin uses.
+    #[test]
+    fn the_magic_is_vstp_the_bytes_every_real_plugin_stamps() {
+        assert_eq!(
+            VST_MAGIC.to_be_bytes(),
+            *b"VstP",
+            "the magic must be the ABI's 'VstP', or the bridge rejects every real plugin"
+        );
+    }
 }

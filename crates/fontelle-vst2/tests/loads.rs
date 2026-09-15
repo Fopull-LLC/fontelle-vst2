@@ -20,19 +20,25 @@ fn fixture_so() -> PathBuf {
         .parent()
         .and_then(|p| p.parent())
         .expect("target/<profile> is two above the test binary");
+    // The cdylib can sit at the profile root and/or under deps/. `cargo test`
+    // refreshes the deps/ copy but does not always uplift the root one, so a
+    // stale root copy can shadow the fresh build — pick whichever is newest.
+    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
     for name in [
         "libvst2_fixture.so",
         "vst2_fixture.dll",
         "libvst2_fixture.dylib",
     ] {
-        let candidate = profile_dir.join(name);
-        if candidate.exists() {
-            return candidate;
+        for candidate in [profile_dir.join(name), profile_dir.join("deps").join(name)] {
+            if let Ok(modified) = std::fs::metadata(&candidate).and_then(|m| m.modified())
+                && newest.as_ref().is_none_or(|(t, _)| modified >= *t)
+            {
+                newest = Some((modified, candidate));
+            }
         }
-        let in_deps = profile_dir.join("deps").join(name);
-        if in_deps.exists() {
-            return in_deps;
-        }
+    }
+    if let Some((_, path)) = newest {
+        return path;
     }
     panic!(
         "the fixture plugin was not built next to the test — expected \
