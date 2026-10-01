@@ -24,6 +24,7 @@ const eff_GetVendorString: i32 = 47;
 const eff_GetProductString: i32 = 48;
 const eff_GetParamName: i32 = 8;
 const eff_GetParamDisplay: i32 = 7;
+const eff_ProcessEvents: i32 = 25;
 
 type HostCallback = unsafe extern "C" fn(*mut AEffect, i32, i32, isize, *mut c_void, f32) -> isize;
 type DispatcherFn = unsafe extern "C" fn(*mut AEffect, i32, i32, isize, *mut c_void, f32) -> isize;
@@ -61,10 +62,35 @@ struct AEffect {
 /// The plugin's own state: the one parameter, and a place for the host callback.
 struct Fixture {
     gain: f32,
+    /// The channel, one-based, of the last note-on it was sent — read back as
+    /// parameter 1, so a test can see a host's MIDI arrive on the channel it
+    /// was sent on. Not counted in `numParams`: it is the test's window, not
+    /// a knob.
+    last_channel: f32,
+}
+
+/// The events list `effProcessEvents` hands over: a count, a reserved word,
+/// then that many pointers to events.
+#[repr(C)]
+struct VstEvents {
+    num_events: i32,
+    reserved: isize,
+    events: [*const VstMidiEvent; 1],
+}
+
+#[repr(C)]
+struct VstMidiEvent {
+    kind: i32,
+    byte_size: i32,
+    delta_frames: i32,
+    flags: i32,
+    note_length: i32,
+    note_offset: i32,
+    midi_data: [u8; 4],
 }
 
 unsafe extern "C" fn dispatcher(
-    _effect: *mut AEffect,
+    effect: *mut AEffect,
     opcode: i32,
     _index: i32,
     _value: isize,
@@ -82,6 +108,25 @@ unsafe extern "C" fn dispatcher(
         }
     };
     match opcode {
+        eff_ProcessEvents if !ptr.is_null() => {
+            let fixture = unsafe { &mut *((*effect).object as *mut Fixture) };
+            let events = ptr as *const VstEvents;
+            // SAFETY: the host's list, `num_events` pointers long, valid for
+            // this call.
+            unsafe {
+                let list = std::ptr::addr_of!((*events).events) as *const *const VstMidiEvent;
+                for i in 0..(*events).num_events.max(0) as usize {
+                    let event = *list.add(i);
+                    if !event.is_null() && (*event).kind == 1 {
+                        let status = (*event).midi_data[0];
+                        if status & 0xf0 == 0x90 && (*event).midi_data[2] > 0 {
+                            fixture.last_channel = f32::from(status & 0x0f) + 1.0;
+                        }
+                    }
+                }
+            }
+            1
+        }
         eff_GetEffectName => {
             write("Fixture Gain");
             1
@@ -112,8 +157,11 @@ unsafe extern "C" fn set_parameter(effect: *mut AEffect, _index: i32, value: f32
     fixture.gain = value;
 }
 
-unsafe extern "C" fn get_parameter(effect: *mut AEffect, _index: i32) -> f32 {
+unsafe extern "C" fn get_parameter(effect: *mut AEffect, index: i32) -> f32 {
     let fixture = unsafe { &*((*effect).object as *mut Fixture) };
+    if index == 1 {
+        return fixture.last_channel;
+    }
     fixture.gain
 }
 
@@ -143,7 +191,10 @@ unsafe extern "C" fn process_replacing(
 /// off it.
 #[unsafe(no_mangle)]
 pub extern "C" fn VSTPluginMain(_callback: HostCallback) -> *mut AEffect {
-    let fixture = Box::into_raw(Box::new(Fixture { gain: 1.0 }));
+    let fixture = Box::into_raw(Box::new(Fixture {
+        gain: 1.0,
+        last_channel: 0.0,
+    }));
     let effect = Box::new(AEffect {
         magic: VST_MAGIC,
         dispatcher: Some(dispatcher),

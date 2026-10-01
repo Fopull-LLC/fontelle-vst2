@@ -375,6 +375,12 @@ impl Vst2Plugin {
         });
     }
 
+    /// One raw MIDI message, channel and all — Fontelle's MPE, through the
+    /// optional `fontelle_bridge_midi` symbol.
+    pub fn midi(&mut self, frame: u32, status: u8, d1: u8, d2: u8) {
+        self.queue_midi(frame, status, d1 & 0x7f, d2 & 0x7f);
+    }
+
     pub fn note_on(&mut self, frame: u32, key: u8, velocity: f64) {
         let vel = (velocity.clamp(0.0, 1.0) * 127.0).round() as u8;
         // A note-on with velocity 0 is a note-off to a plugin, so floor at 1.

@@ -441,3 +441,25 @@ static BRIDGE: FontelleBridge = FontelleBridge {
 pub unsafe extern "C" fn fontelle_bridge_entry() -> *const FontelleBridge {
     &BRIDGE
 }
+
+/// The **optional** symbol Fontelle looks up beside the entry point: one raw
+/// MIDI message with its channel, which is how a chord goes out as MPE —
+/// each note on a channel of its own, so a slide bends one note
+/// (`bridge_abi::MIDI_SYMBOL`). A Fontelle that predates it never asks.
+///
+/// # Safety
+///
+/// `instance` is one `open` returned and `close` has not ended; audio
+/// thread, like the table's `note_on`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn fontelle_bridge_midi(
+    instance: Instance,
+    frame: u32,
+    status: u8,
+    data1: u8,
+    data2: u8,
+) {
+    if let Some(plugin) = unsafe { plugin(instance) } {
+        plugin.midi(frame, status, data1, data2);
+    }
+}

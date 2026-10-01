@@ -23,6 +23,17 @@ pub const ENTRY_SYMBOL: &str = "fontelle_bridge_entry";
 
 pub type EntryFn = unsafe extern "C" fn() -> *const FontelleBridge;
 
+/// The **optional** second symbol: one raw MIDI message, channel and all, at
+/// `frame` — how Fontelle sends a chord as MPE, each note on a channel of
+/// its own so a slide bends one note. A host that finds no such symbol uses
+/// the table; the table and [`ABI_VERSION`] are unchanged by it.
+pub const MIDI_SYMBOL: &str = "fontelle_bridge_midi";
+
+/// What [`MIDI_SYMBOL`] names. **Audio thread**, in time order with the
+/// table's notes.
+pub type MidiFn =
+    unsafe extern "C" fn(instance: Instance, frame: u32, status: u8, data1: u8, data2: u8);
+
 #[repr(C)]
 pub struct PluginInfo {
     pub id: *const c_char,

@@ -125,3 +125,36 @@ fn it_opens_the_fixture_and_the_gain_actually_applies() {
         (bridge.close)(inst);
     }
 }
+
+/// **Raw MIDI, channel and all** — the optional `fontelle_bridge_midi`
+/// entry point Fontelle uses for MPE: each note of a chord on a channel of
+/// its own, so a slide bends one note (Fontelle's `docs/note-paths-plan.md`
+/// §6). The table's own `note_on` always says channel 1; this must not.
+///
+/// The fixture remembers the channel of the last note-on it was sent and
+/// reports it, one-based, as parameter 1.
+#[test]
+fn raw_midi_reaches_the_plugin_on_the_channel_it_was_sent_on() {
+    use fontelle_vst2::fontelle_bridge_midi;
+    let bridge = bridge();
+    let path = CString::new(fixture_so().to_string_lossy().into_owned()).unwrap();
+    let empty = CString::new("").unwrap();
+    unsafe {
+        let inst = (bridge.open)(path.as_ptr(), empty.as_ptr());
+        assert!(!inst.is_null());
+        assert_eq!((bridge.activate)(inst, 48_000.0, 64), 0);
+
+        fontelle_bridge_midi(inst, 0, 0x93, 60, 100);
+        let frames = 64usize;
+        let silence = vec![0.0f32; frames];
+        let mut left = vec![0.0f32; frames];
+        let mut right = vec![0.0f32; frames];
+        let inputs = [silence.as_ptr(), silence.as_ptr()];
+        let outputs = [left.as_mut_ptr(), right.as_mut_ptr()];
+        (bridge.process)(inst, inputs.as_ptr(), 2, outputs.as_ptr(), 2, frames as u32);
+        assert_eq!((bridge.get_param)(inst, 1), 4.0, "channel 4, as sent");
+
+        (bridge.deactivate)(inst);
+        (bridge.close)(inst);
+    }
+}
